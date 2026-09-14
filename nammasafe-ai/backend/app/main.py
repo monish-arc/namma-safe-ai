@@ -27,7 +27,13 @@ from app.schemas import (
     RiskAlertCreate,
     AccommodationUpdate,
     AssignmentCreate,
+    EvacuationPlanRequest,
+    RoutePlanResponse,
+    RouteConfirmRequest,
+    FloodForecastResponse,
+    DataStatusResponse,
 )
+from app.flood_forecast import get_flood_forecasts, get_data_status
 from app.risk_engine import (
     calculate_hazard_score,
     calculate_vulnerability_score,
@@ -39,6 +45,17 @@ from app.risk_engine import (
 from app.seed_data import get_processed_seed_data
 from app.database import engine
 from app.models import Base
+from app.geo import point_in_zone, to_geojson_line
+from app.road_network import load_road_network, seed_road_conditions, RoadGraph
+from app.route_planner import (
+    build_scope_for_area,
+    enforce_origin_scope,
+    plan_evacuation,
+    resolve_origin,
+    route_response_from_record,
+    select_candidate_sites,
+    PlannerInputError,
+)
 
 app = FastAPI(
     title="NammaSafe AI API",
@@ -58,6 +75,9 @@ app.add_middleware(
 
 # In-memory store initialized from seed data
 DATA = get_processed_seed_data()
+DATA["road_network"] = load_road_network()
+DATA["road_conditions"] = seed_road_conditions()
+DATA.setdefault("route_calculations", [])
 
 
 @app.on_event("startup")
@@ -74,10 +94,14 @@ def get_area_scope(area_id: str) -> Dict[str, str]:
         (item for item in DATA["administrative_areas"]["sub_districts"] if item["id"] == area["sub_district_id"]),
         None,
     )
+    if not sub_district:
+        raise HTTPException(status_code=404, detail="Sub-district not found")
     district = next(
         (item for item in DATA["administrative_areas"]["districts"] if item["id"] == sub_district["district_id"]),
         None,
     )
+    if not district:
+        raise HTTPException(status_code=404, detail="District not found")
     return {
         "state_id": district["state_id"],
         "district_id": district["id"],
@@ -612,4 +636,188 @@ def upload_hazard_data(
         "features_processed": len(payload.payload.get("features", [])) if "features" in payload.payload else 1,
         "processed_by": user.get("full_name", "Admin"),
         "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+# ==================== EVACUATION ROUTING ====================
+def _handle_planner_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, PlannerInputError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, PermissionError):
+        return HTTPException(status_code=403, detail=str(exc))
+    return HTTPException(status_code=500, detail="Evacuation planning failed unexpectedly")
+
+
+@app.get("/api/evacuation/candidates")
+def evacuation_candidates(
+    origin_type: str = Query(...),
+    origin_id: Optional[str] = Query(None),
+    families_count: int = Query(gt=0, le=50000, description="Families to relocate"),
+    user: dict = Depends(require_permissions("evacuation.plan")),
+):
+    try:
+        origin = resolve_origin(DATA, {"type": origin_type, "id": origin_id})
+    except Exception as exc:
+        raise _handle_planner_error(exc)
+    try:
+        enforce_origin_scope(user, origin["scope"])
+    except PermissionError as exc:
+        raise _handle_planner_error(exc)
+
+    candidates = select_candidate_sites(DATA, origin, families_count, limit=5)
+    record_audit_event("evacuation.candidates_requested", user, {
+        "origin": origin.get("id"), "origin_type": origin["type"], "families": families_count,
+    })
+    return {
+        "origin": {"type": origin["type"], "id": origin.get("id"), "label": origin["label"]},
+        "families_count": families_count,
+        "candidates": candidates,
+    }
+
+
+@app.post("/api/evacuation/plan", response_model=RoutePlanResponse)
+def evacuation_plan(
+    payload: EvacuationPlanRequest,
+    user: dict = Depends(require_permissions("evacuation.plan")),
+):
+    try:
+        origin = resolve_origin(DATA, payload.origin.model_dump())
+    except Exception as exc:
+        raise _handle_planner_error(exc)
+    try:
+        enforce_origin_scope(user, origin["scope"])
+    except PermissionError as exc:
+        raise _handle_planner_error(exc)
+
+    try:
+        result = plan_evacuation(
+            DATA,
+            payload.origin.model_dump(),
+            payload.families_count,
+            payload.dest_site_id,
+        )
+    except Exception as exc:
+        raise _handle_planner_error(exc)
+
+    record = next((r for r in DATA["route_calculations"] if r["id"] == result.get("route_id")), None)
+    if record:
+        record["user_id"] = user.get("sub")
+        record["user_name"] = user.get("full_name")
+
+    record_audit_event("evacuation.route_planned", user, {
+        "route_id": result.get("route_id"),
+        "origin": result.get("origin", {}).get("id"),
+        "destination": result.get("destination", {}).get("site_id"),
+        "families": result.get("families_count"),
+        "route_status": result.get("route_status"),
+    })
+    return result
+
+
+@app.get("/api/evacuation/routes/{route_id}")
+def get_evacuation_route(
+    route_id: str,
+    user: dict = Depends(require_permissions("evacuation.read")),
+):
+    record = next((r for r in DATA["route_calculations"] if r["id"] == route_id), None)
+    if not record:
+        raise HTTPException(status_code=404, detail="Evacuation route not found")
+    try:
+        enforce_origin_scope(user, record["origin_scope"])
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    return route_response_from_record(record)
+
+
+@app.post("/api/evacuation/routes/{route_id}/confirm")
+def confirm_evacuation_route(
+    route_id: str,
+    payload: RouteConfirmRequest,
+    user: dict = Depends(require_permissions("evacuation.confirm")),
+):
+    record = next((r for r in DATA["route_calculations"] if r["id"] == route_id), None)
+    if not record:
+        raise HTTPException(status_code=404, detail="Evacuation route not found")
+    try:
+        enforce_origin_scope(user, record["origin_scope"])
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    # Re-verify destination safety before confirmation (never confirm into a danger zone)
+    site = next((s for s in DATA["relocation_sites"] if s["id"] == record["dest_site_id"]), None)
+    if site:
+        critical = [z for z in DATA["red_zones"] if z.get("risk_level") == "Critical"]
+        if any(point_in_zone(site["latitude"], site["longitude"], zone) for zone in critical):
+            return {
+                "route_status": "DEST_BECAME_UNSAFE",
+                "message": "Destination site now lies inside an active critical hazard zone. Confirmation blocked.",
+            }
+
+    record["status"] = "confirmed"
+    record["confirmed_at"] = datetime.utcnow().isoformat()
+    record["decision"] = payload.decision
+    record["notes"] = payload.notes
+    record_audit_event("evacuation.route_confirmed", user, {
+        "route_id": route_id, "decision": payload.decision, "destination": record["dest_site_id"],
+    })
+    return route_response_from_record(record)
+
+
+@app.get("/api/evacuation/road-conditions")
+def list_road_conditions(user: dict = Depends(require_permissions("evacuation.read"))):
+    graph = RoadGraph()
+    graph.build_hazard_overlay(
+        red_zones=DATA["red_zones"],
+        habitations=DATA["habitations"],
+        field_reports=DATA["field_reports"],
+        road_conditions=DATA["road_conditions"],
+        origin_node=None,
+        dest_node=None,
+    )
+    segments = [
+        {
+            "segment_id": edge["id"],
+            "name": edge["name"],
+            "status": graph.edge_status.get(edge["id"], {}).get("status", "OPEN"),
+            "data_class": "curated_demo",
+            "is_synthetic": True,
+            "geometry": to_geojson_line([
+                (float(graph.nodes[edge["from"]]["lat"]), float(graph.nodes[edge["from"]]["lng"])),
+                (float(graph.nodes[edge["to"]]["lat"]), float(graph.nodes[edge["to"]]["lng"])),
+            ]),
+        }
+        for edge in graph.edges
+    ]
+    return {
+        "road_conditions": DATA["road_conditions"],
+        "segments": segments,
+        "is_synthetic_demo_data": True,
+        "data_sources": [
+            {
+                "layer": "road_network",
+                "status": "curated_demo",
+                "detail": "Curated pilot corridor graph (NH-07 + key feeders); not live network data.",
+            }
+        ],
+    }
+
+
+# ==================== FLOOD FORECAST & DATA STATUS ====================
+@app.get("/api/flood-forecast", response_model=FloodForecastResponse)
+def flood_forecast(user: dict = Depends(require_permissions("evacuation.read"))):
+    """
+    River-level gauges + inundation zones for the pilot district.
+
+    Defaults to clearly-labelled DEMO seed data. When GOOGLE_FLOOD_API_KEY is
+    configured and FLOOD_DATA_MODE=live the response carries data_status=FORECAST.
+    """
+    return get_flood_forecasts()
+
+
+@app.get("/api/data-status", response_model=DataStatusResponse)
+def data_status(user: dict = Depends(require_permissions("map.read_public"))):
+    """Provenance + status of every map data layer (consumed by the DataSourcePanel)."""
+    return {
+        "layers": get_data_status(),
+        "checked_at": datetime.utcnow().isoformat(),
     }

@@ -23,6 +23,7 @@ interface SimulatorPageProps {
   initialHabitationId?: string;
   initialSiteId?: string;
   onSimulate: (habId: string, siteId: string, families: number) => Promise<SimulationResult>;
+  onPlanEvacuation?: (hab: Habitation) => void;
 }
 
 export const SimulatorPage: React.FC<SimulatorPageProps> = ({
@@ -31,6 +32,7 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({
   initialHabitationId,
   initialSiteId,
   onSimulate,
+  onPlanEvacuation,
 }) => {
   const [selectedHabId, setSelectedHabId] = useState<string>(
     initialHabitationId || habitations[0]?.id || 'hab-joshimath'
@@ -89,6 +91,16 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {onPlanEvacuation && currentHab && (
+            <button
+              id="simulator-plan-evacuation-btn"
+              onClick={() => onPlanEvacuation(currentHab)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+            >
+              <Route className="w-3.5 h-3.5" />
+              <span>Plan Evacuation from {currentHab.village_name}</span>
+            </button>
+          )}
           {saveSuccess && (
             <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200 animate-in fade-in">
               <CheckCircle2 className="w-3.5 h-3.5" /> Plan Saved to Drafts

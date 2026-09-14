@@ -9,6 +9,7 @@ import {
   ArrowUpDown,
   Compass,
   ArrowRight,
+  Navigation,
 } from 'lucide-react';
 import { Habitation } from '../types';
 import { RiskBadge } from '../components/RiskBadge';
@@ -17,12 +18,14 @@ interface HabitationsPageProps {
   habitations: Habitation[];
   onSelectHabitation: (hab: Habitation) => void;
   onSimulateHabitation: (habId: string) => void;
+  onPlanEvacuation?: (hab: Habitation) => void;
 }
 
 export const HabitationsPage: React.FC<HabitationsPageProps> = ({
   habitations,
   onSelectHabitation,
   onSimulateHabitation,
+  onPlanEvacuation,
 }) => {
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all');
@@ -211,6 +214,17 @@ export const HabitationsPage: React.FC<HabitationsPageProps> = ({
                   <Compass className="w-3.5 h-3.5" />
                   <span>Simulate</span>
                 </button>
+                {onPlanEvacuation && (
+                  <button
+                    id={`evacuate-hab-${hab.id}`}
+                    onClick={() => onPlanEvacuation(hab)}
+                    title="Plan a safe evacuation route"
+                    className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-sm transition cursor-pointer"
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                    <span>Evacuate</span>
+                  </button>
+                )}
               </div>
             </div>
           );

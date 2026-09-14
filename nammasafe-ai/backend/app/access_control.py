@@ -1,37 +1,42 @@
 """Role permissions and administrative-scope checks for the pilot platform."""
 
-from typing import Any, Dict, Iterable, Set
+from typing import Any, Dict, Iterable, Mapping, Optional, Set
 
 
 ROLE_PERMISSIONS: Dict[str, Set[str]] = {
-    "normal_citizen": {"map.read_public", "alert.read", "accommodation.read"},
+    "normal_citizen": {"map.read_public", "alert.read", "accommodation.read", "evacuation.read"},
     "field_officer": {
         "map.read_public", "alert.read", "alert.raise", "accommodation.read",
+        "evacuation.read",
     },
     "local_office": {
         "map.read_public", "alert.read", "alert.raise", "accommodation.read",
-        "accommodation.manage",
+        "accommodation.manage", "evacuation.read", "evacuation.plan",
     },
     "sub_district_officer": {
         "map.read_public", "alert.read", "alert.raise", "accommodation.read",
         "accommodation.manage", "assignment.read", "assignment.manage",
+        "evacuation.read", "evacuation.plan", "evacuation.confirm",
     },
     "district_officer": {
         "map.read_public", "alert.read", "alert.raise", "accommodation.read",
         "accommodation.manage", "assignment.read", "assignment.manage",
+        "evacuation.read", "evacuation.plan", "evacuation.confirm",
     },
     "state_officer": {
         "map.read_public", "alert.read", "alert.raise", "accommodation.read",
         "accommodation.manage", "assignment.read", "assignment.manage",
+        "evacuation.read", "evacuation.plan", "evacuation.confirm",
     },
     "gis_analysis_officer": {
         "map.read_public", "alert.read", "accommodation.read", "hazard-history.read",
-        "analytics.read",
+        "analytics.read", "evacuation.read", "evacuation.plan",
     },
     "admin": {
         "map.read_public", "alert.read", "accommodation.read", "assignment.read",
         "assignment.manage", "hazard-history.read", "analytics.read", "audit-log.read",
         "session-log.read", "system-health.read", "technical-data.repair", "role.manage",
+        "evacuation.read", "evacuation.plan", "evacuation.confirm",
     },
 }
 
@@ -41,7 +46,9 @@ def has_permissions(role: str, permissions: Iterable[str]) -> bool:
     return all(permission in granted for permission in permissions)
 
 
-def scope_contains(assignment: Dict[str, str], requested: Dict[str, str]) -> bool:
+def scope_contains(
+    assignment: Mapping[str, Optional[str]], requested: Mapping[str, Optional[str]]
+) -> bool:
     """Return whether an assigned jurisdiction contains a requested jurisdiction."""
     for level in ("state_id", "district_id", "sub_district_id", "area_id"):
         assigned_value = assignment.get(level)

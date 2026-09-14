@@ -15,6 +15,37 @@ export interface AdministrativeScope {
   area_id: string;
 }
 
+export interface RegionState {
+  code: number;
+  name: string;
+}
+
+export interface RegionDistrict {
+  code: number;
+  name: string;
+}
+
+export interface RegionSubDistrict {
+  code: number;
+  name: string;
+}
+
+export interface RegionBlock {
+  code: number;
+  name: string;
+}
+
+export type RegionPlace = [code: number, name: string];
+
+export interface RegionSelection {
+  state: RegionState | null;
+  district: RegionDistrict | null;
+  subDistrict: RegionSubDistrict | null;
+  place: RegionPlace | null;
+}
+
+export type { RegionViewportFocus } from '../lib/regionViewport';
+
 export interface User {
   id: string;
   username: string;
@@ -245,4 +276,172 @@ export interface MapLayersResponse {
   habitations: Habitation[];
   relocation_sites: RelocationSite[];
   infrastructure: MapLayerItem[];
+}
+
+export type EvacuationOriginType = 'habitation' | 'alert' | 'event' | 'map_click';
+
+export interface EvacuationOriginPayload {
+  type: EvacuationOriginType;
+  id?: string | null;
+  label?: string;
+  latitude?: number;
+  longitude?: number;
+  lat?: number;
+  lng?: number;
+}
+
+export type RouteStatus =
+  | 'SAFE'
+  | 'CAUTION'
+  | 'NO_ROUTE'
+  | 'NO_SAFE_SITE'
+  | 'ORIGIN_UNREACHABLE'
+  | 'DEST_UNREACHABLE'
+  | 'DEST_BECAME_UNSAFE';
+
+export interface EvacuationRouteCandidate {
+  site_id: string;
+  site_name: string;
+  site_score?: number | null;
+  route_status?: RouteStatus | null;
+  distance_km?: number | null;
+  safety_score?: number | null;
+  final_score?: number | null;
+  reason?: string | null;
+  exclusion_reason?: string | null;
+}
+
+export interface EvacuationHazard {
+  zone_name?: string;
+  hazard_type?: string;
+  risk_level?: string;
+  road?: string;
+  status?: string;
+  edge_id?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}
+
+export interface EvacuationBlockedSegment {
+  segment_id: string;
+  name: string;
+  status: string;
+  hazard_type: string;
+  reason: string;
+  geometry?: { type: 'LineString'; coordinates: [number, number][] } | null;
+}
+
+export interface EvacuationDestination {
+  site_id: string;
+  site_name: string;
+  latitude: number;
+  longitude: number;
+  available_capacity_families: number;
+  final_capacity_families: number;
+  suitability_score: number;
+}
+
+export interface EvacuationShortest {
+  distance_km: number;
+  delta_km?: number;
+}
+
+export interface EvacuationPlanResponse {
+  route_id?: string | null;
+  route_status: RouteStatus;
+  status?: string;
+  confirmed_at?: string | null;
+  origin: EvacuationOriginPayload;
+  destination?: EvacuationDestination | null;
+  families_count: number;
+  selected_site_reason: string;
+  route_geometry?: { type: 'LineString'; coordinates: [number, number][] } | null;
+  distance_km?: number | null;
+  travel_time_min?: number | null;
+  safety_score?: number | null;
+  risk_score?: number | null;
+  hazards_encountered?: EvacuationHazard[] | null;
+  hazards_avoided?: EvacuationHazard[] | null;
+  blocked_segments?: EvacuationBlockedSegment[] | null;
+  waypoints?: EvacuationOriginPayload[] | null;
+  route_reason?: string | null;
+  shortest?: EvacuationShortest | null;
+  candidates?: EvacuationRouteCandidate[] | null;
+  all_candidates?: Array<Record<string, unknown>> | null;
+  warnings?: string[];
+  computed_at?: string;
+  verified_at?: string | null;
+  data_sources?: Array<{ layer: string; status: string; detail: string }>;
+  is_synthetic_route: boolean;
+  payload_version?: string;
+}
+
+export interface RoadConditionSegment {
+  segment_id: string;
+  name: string;
+  status: 'OPEN' | 'RESTRICTED' | 'CLOSED' | string;
+  data_class: string;
+  is_synthetic: boolean;
+  geometry?: { type: 'LineString'; coordinates: [number, number][] } | null;
+}
+
+export interface RoadConditionsResponse {
+  road_conditions: Array<Record<string, unknown>>;
+  segments: RoadConditionSegment[];
+  is_synthetic_demo_data: boolean;
+  data_sources: Array<{ layer: string; status: string; detail: string }>;
+}
+
+export type FloodRiskLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'EXTREME';
+export type DataLayerStatus = 'LIVE' | 'FORECAST' | 'DEMO' | 'NOT CONFIGURED' | 'UNAVAILABLE';
+
+export interface FloodGauge {
+  gauge_id: string;
+  gauge_name: string;
+  river: string;
+  latitude: number;
+  longitude: number;
+  current_level_m: number;
+  warning_level_m: number;
+  danger_level_m: number;
+  risk_level: FloodRiskLevel;
+  affected_edges?: string[];
+  inundation_zone?: { type: 'Polygon'; coordinates: number[][][] };
+  data_source?: string;
+  data_status?: DataLayerStatus;
+  computed_at?: string;
+}
+
+export interface FloodZone {
+  zone_id: string;
+  gauge_id: string;
+  gauge_name: string;
+  river: string;
+  risk_level: FloodRiskLevel;
+  geometry: { type: 'Polygon'; coordinates: number[][][] };
+}
+
+export interface FloodForecastResponse {
+  gauges: FloodGauge[];
+  zones: FloodZone[];
+  data_status: DataLayerStatus;
+  data_source: string;
+  computed_at: string;
+}
+
+export interface DataStatusEntry {
+  layer: string;
+  status: DataLayerStatus;
+  source: string;
+  updated_at?: string;
+}
+
+export interface DataStatusResponse {
+  layers: DataStatusEntry[];
+  checked_at: string;
+}
+
+export interface BasemapKey {
+  id: 'street' | 'satellite';
+  label: string;
 }

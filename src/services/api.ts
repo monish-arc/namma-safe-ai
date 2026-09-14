@@ -8,6 +8,12 @@ import {
   User,
   PriorityLevel,
   PriorityCalculationResult,
+  EvacuationPlanResponse,
+  EvacuationOriginPayload,
+  RoadConditionsResponse,
+  EvacuationRouteCandidate,
+  FloodForecastResponse,
+  DataStatusResponse,
 } from '../types';
 import {
   INITIAL_HABITATIONS,
@@ -26,6 +32,87 @@ let relocationSitesState = [...INITIAL_RELOCATION_SITES];
 let recommendationsState = [...INITIAL_RECOMMENDATIONS];
 let fieldReportsState = [...INITIAL_FIELD_REPORTS];
 let activeUser: User = DEMO_USERS[0]; // Admin by default
+
+// Bearer token for the RBAC-guarded /api/evacuation/* surface (backend login).
+let authToken: string | null = (() => {
+  try { return localStorage.getItem('nammasafe_access_token'); } catch { return null; }
+})();
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+const scopeOrDefault = (value?: string, fallback = 'joshimath') =>
+  value && value !== '*' ? value : fallback;
+
+async function loginToBackend(): Promise<void> {
+  const user = getActiveUser();
+  const creds: { username_or_email: string; password: string; state_id?: string; district_id?: string; sub_district_id?: string; area_id?: string } = {
+    username_or_email: user.username,
+    password: `${user.username}123`,
+  };
+  if (user.role !== 'admin' && user.assignment) {
+    creds.state_id = scopeOrDefault(user.assignment.state_id, 'uk');
+    creds.district_id = scopeOrDefault(user.assignment.district_id, 'chamoli');
+    creds.sub_district_id = scopeOrDefault(user.assignment.sub_district_id, 'joshimath');
+    creds.area_id = scopeOrDefault(user.assignment.area_id, 'joshimath-central');
+  }
+
+  let token: string | null = null;
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(creds),
+    });
+    if (res.ok) token = (await res.json()).access_token;
+  } catch {
+    token = null;
+  }
+
+  if (!token && user.role !== 'admin') {
+    // Fallback: demo district-officer scope keeps evacuation usable for non-admin personas.
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username_or_email: 'officer',
+          password: 'officer123',
+          state_id: 'uk',
+          district_id: 'chamoli',
+          sub_district_id: 'joshimath',
+          area_id: 'joshimath-central',
+        }),
+      });
+      if (res.ok) token = (await res.json()).access_token;
+    } catch {
+      token = null;
+    }
+  }
+
+  authToken = token;
+  if (token) {
+    try { localStorage.setItem('nammasafe_access_token', token); } catch { /* noop */ }
+  } else {
+    try { localStorage.removeItem('nammasafe_access_token'); } catch { /* noop */ }
+  }
+}
+
+async function ensureAuthToken(): Promise<void> {
+  if (authToken) return;
+  await loginToBackend();
+}
+
+async function authFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  await ensureAuthToken();
+  const headers: Record<string, string> = {
+    ...((options.headers as Record<string, string>) ?? {}),
+  };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  return fetch(path, { ...options, headers });
+}
 
 export function getActiveUser(): User {
   const saved = localStorage.getItem('nammasafe_user');
@@ -491,6 +578,92 @@ export const api = {
       decision_rationale: rationale,
       alternative_site_recommendation: altRec,
     };
+  },
+
+  async planEvacuation(
+    origin: EvacuationOriginPayload,
+    familiesCount?: number,
+    destSiteId?: string
+  ): Promise<EvacuationPlanResponse> {
+    await ensureAuthToken();
+    const res = await authFetch('/api/evacuation/plan', {
+      method: 'POST',
+      body: JSON.stringify({
+        origin: { type: origin.type, id: origin.id, label: origin.label, lat: origin.lat, lng: origin.lng, latitude: origin.latitude, longitude: origin.longitude },
+        families_count: familiesCount,
+        dest_site_id: destSiteId,
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error((detail as { detail?: string }).detail ?? `Evacuation planning failed (${res.status})`);
+    }
+    return res.json();
+  },
+
+  async getEvacuationCandidates(
+    originType: EvacuationOriginPayload['type'],
+    originId: string,
+    familiesCount = 50
+  ): Promise<{ origin: EvacuationOriginPayload; families_count: number; candidates: EvacuationRouteCandidate[] }> {
+    await ensureAuthToken();
+    const params = new URLSearchParams({
+      origin_type: originType,
+      origin_id: originId,
+      families_count: String(familiesCount),
+    });
+    const res = await authFetch(`/api/evacuation/candidates?${params.toString()}`);
+    if (!res.ok) throw new Error(`Could not fetch evacuation candidates (${res.status})`);
+    return res.json();
+  },
+
+  async getEvacuationRoute(routeId: string): Promise<EvacuationPlanResponse> {
+    await ensureAuthToken();
+    const res = await authFetch(`/api/evacuation/routes/${routeId}`);
+    if (!res.ok) throw new Error(`Could not fetch evacuation route (${res.status})`);
+    return res.json();
+  },
+
+  async confirmEvacuationRoute(routeId: string, decision = 'approved', notes?: string): Promise<EvacuationPlanResponse> {
+    await ensureAuthToken();
+    const res = await authFetch(`/api/evacuation/routes/${routeId}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, notes }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error((detail as { detail?: string }).detail ?? `Could not confirm route (${res.status})`);
+    }
+    return res.json();
+  },
+
+  async getRoadConditions(): Promise<RoadConditionsResponse> {
+    await ensureAuthToken();
+    const res = await authFetch('/api/evacuation/road-conditions');
+    if (!res.ok) throw new Error(`Could not fetch road conditions (${res.status})`);
+    return res.json();
+  },
+
+  async getFloodForecast(): Promise<FloodForecastResponse> {
+    await ensureAuthToken();
+    const res = await authFetch('/api/flood-forecast');
+    if (!res.ok) throw new Error(`Could not fetch flood forecast (${res.status})`);
+    return res.json();
+  },
+
+  async getDataStatus(): Promise<DataStatusResponse> {
+    await ensureAuthToken();
+    const res = await authFetch('/api/data-status');
+    if (!res.ok) {
+      return {
+        layers: [
+          { layer: 'flood_forecast', status: 'NOT CONFIGURED', source: 'API key not configured' },
+          { layer: 'satellite_tiles', status: 'LIVE', source: 'Esri World Imagery (free, no key)' },
+        ],
+        checked_at: new Date().toISOString(),
+      };
+    }
+    return res.json();
   },
 
   async resetSeedData() {

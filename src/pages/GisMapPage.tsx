@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Search,
   Layers,
@@ -7,10 +7,12 @@ import {
   Crosshair,
   Info,
   Maximize2,
+  Route as RouteIcon,
 } from 'lucide-react';
-import { Habitation, RelocationSite, RedZone, MapLayerItem } from '../types';
+import { Habitation, RelocationSite, RedZone, MapLayerItem, FloodForecastResponse, DataStatusEntry } from '../types';
 import { LeafletMap } from '../components/LeafletMap';
 import { RiskBadge } from '../components/RiskBadge';
+import type { RegionViewportFocus } from '../lib/regionViewport';
 
 interface GisMapPageProps {
   habitations: Habitation[];
@@ -19,6 +21,10 @@ interface GisMapPageProps {
   infrastructure: MapLayerItem[];
   onSelectHabitation: (hab: Habitation) => void;
   onSelectSite: (site: RelocationSite) => void;
+  focusRegion?: RegionViewportFocus | null;
+  onOpenEvacuation?: (hab?: Habitation) => void;
+  floodForecast?: FloodForecastResponse | null;
+  dataStatus?: DataStatusEntry[] | null;
 }
 
 export const GisMapPage: React.FC<GisMapPageProps> = ({
@@ -28,10 +34,24 @@ export const GisMapPage: React.FC<GisMapPageProps> = ({
   infrastructure,
   onSelectHabitation,
   onSelectSite,
+  focusRegion,
+  onOpenEvacuation,
+  floodForecast = null,
+  dataStatus = null,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedHabId, setSelectedHabId] = useState<string | undefined>(undefined);
   const [selectedSiteId, setSelectedSiteId] = useState<string | undefined>(undefined);
+  const highlightedHabRef = useRef<string | undefined>(undefined);
+
+  // Highlight the habitation resolved from the region quick-select (center-only, no modal).
+  useEffect(() => {
+    const id = focusRegion?.habitationId;
+    if (id && id !== highlightedHabRef.current) {
+      highlightedHabRef.current = id;
+      setSelectedHabId(id);
+    }
+  }, [focusRegion]);
 
   const filteredHabitations = habitations.filter(
     (h) =>
@@ -98,6 +118,19 @@ export const GisMapPage: React.FC<GisMapPageProps> = ({
         </div>
 
         <div className="flex items-center gap-2 text-xs text-slate-500">
+          {onOpenEvacuation && (
+            <button
+              id="map-plan-evacuation-btn"
+              onClick={() => {
+                const hab = habitations.find((h) => h.id === selectedHabId);
+                onOpenEvacuation(hab ? hab : undefined);
+              }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] transition cursor-pointer"
+            >
+              <RouteIcon className="w-3.5 h-3.5" />
+              Plan evacuation
+            </button>
+          )}
           <span className="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-lg font-medium text-[11px]">
             <span className="w-2 h-2 rounded-full bg-red-500" /> 10 Habitations
           </span>
@@ -195,6 +228,7 @@ export const GisMapPage: React.FC<GisMapPageProps> = ({
             infrastructure={infrastructure}
             selectedHabitationId={selectedHabId}
             selectedSiteId={selectedSiteId}
+            focus={focusRegion ?? null}
             onSelectHabitation={(hab) => {
               setSelectedHabId(hab.id);
               onSelectHabitation(hab);
@@ -203,6 +237,8 @@ export const GisMapPage: React.FC<GisMapPageProps> = ({
               setSelectedSiteId(site.id);
               onSelectSite(site);
             }}
+            floodForecast={floodForecast}
+            dataStatus={dataStatus}
           />
         </div>
       </div>

@@ -232,3 +232,111 @@ class AdminHazardUploadRequest(BaseModel):
     hazard_data_format: str # GeoJSON, CSV, Shapefile
     payload: Dict[str, Any]
     update_notes: Optional[str] = None
+
+
+# -------------------- Evacuation Routing --------------------
+class EvacuationOrigin(BaseModel):
+    type: Literal["habitation", "alert", "event", "map_click"]
+    id: Optional[str] = None
+    latitude: Optional[float] = Field(None, ge=-90, le=90)
+    longitude: Optional[float] = Field(None, ge=-180, le=180)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lng: Optional[float] = Field(None, ge=-180, le=180)
+
+
+class EvacuationPlanRequest(BaseModel):
+    origin: EvacuationOrigin
+    families_count: Optional[int] = Field(None, gt=0, le=50000)
+    dest_site_id: Optional[str] = None
+
+
+class RouteCandidateSummary(BaseModel):
+    site_id: str
+    site_name: str
+    site_score: Optional[float] = None
+    route_status: Optional[str] = None
+    distance_km: Optional[float] = None
+    safety_score: Optional[float] = None
+    final_score: Optional[float] = None
+    reason: Optional[str] = None
+    exclusion_reason: Optional[str] = None
+
+
+class RoutePlanResponse(BaseModel):
+    route_id: Optional[str] = None
+    route_status: str
+    origin: Dict[str, Any]
+    destination: Optional[Dict[str, Any]] = None
+    families_count: int
+    selected_site_reason: str
+    route_geometry: Optional[Dict[str, Any]] = None
+    distance_km: Optional[float] = None
+    travel_time_min: Optional[float] = None
+    safety_score: Optional[int] = None
+    risk_score: Optional[int] = None
+    hazards_encountered: Optional[List[Dict[str, Any]]] = None
+    hazards_avoided: Optional[List[Dict[str, Any]]] = None
+    blocked_segments: Optional[List[Dict[str, Any]]] = None
+    waypoints: Optional[List[str]] = None
+    route_reason: Optional[str] = None
+    shortest: Optional[Dict[str, Any]] = None
+    candidates: Optional[List[Dict[str, Any]]] = None
+    all_candidates: Optional[List[Dict[str, Any]]] = None
+    warnings: Optional[List[str]] = None
+    computed_at: Optional[str] = None
+    verified_at: Optional[str] = None
+    data_sources: Optional[List[Dict[str, str]]] = None
+    is_synthetic_route: bool = True
+    payload_version: str = "v1"
+
+
+class RouteConfirmRequest(BaseModel):
+    decision: str = "confirmed"
+    notes: Optional[str] = None
+
+
+# -------------------- Flood Forecast & Data Status --------------------
+class FloodGaugeResponse(BaseModel):
+    gauge_id: str
+    gauge_name: str
+    river: str
+    latitude: float
+    longitude: float
+    current_level_m: float
+    warning_level_m: float
+    danger_level_m: float
+    risk_level: str
+    affected_edges: Optional[List[str]] = None
+    inundation_zone: Optional[Dict[str, Any]] = None
+    data_source: Optional[str] = None
+    data_status: Optional[str] = None
+    computed_at: Optional[str] = None
+
+
+class FloodZoneResponse(BaseModel):
+    zone_id: str
+    gauge_id: str
+    gauge_name: str
+    river: str
+    risk_level: str
+    geometry: Dict[str, Any]
+
+
+class FloodForecastResponse(BaseModel):
+    gauges: List[FloodGaugeResponse]
+    zones: List[FloodZoneResponse]
+    data_status: str
+    data_source: str
+    computed_at: str
+
+
+class DataStatusEntryResponse(BaseModel):
+    layer: str
+    status: str
+    source: str
+    updated_at: Optional[str] = None
+
+
+class DataStatusResponse(BaseModel):
+    layers: List[DataStatusEntryResponse]
+    checked_at: str

@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Info,
   Layers,
+  Navigation,
 } from 'lucide-react';
 import { Habitation, RelocationRecommendation } from '../types';
 import { RiskBadge } from '../components/RiskBadge';
@@ -18,6 +19,7 @@ interface PriorityPageProps {
   recommendations: RelocationRecommendation[];
   onSelectHabitation: (hab: Habitation) => void;
   onSimulate: (habId: string, siteId?: string) => void;
+  onPlanEvacuation?: (hab: Habitation) => void;
   onRecalculatePriority: (params: any) => Promise<any>;
 }
 
@@ -26,6 +28,7 @@ export const PriorityPage: React.FC<PriorityPageProps> = ({
   recommendations,
   onSelectHabitation,
   onSimulate,
+  onPlanEvacuation,
   onRecalculatePriority,
 }) => {
   const [selectedFilter, setSelectedFilter] = useState('all');
@@ -267,6 +270,16 @@ export const PriorityPage: React.FC<PriorityPageProps> = ({
 
                     <td className="px-5 py-3.5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          title="Plan safe evacuation route"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onPlanEvacuation?.(hab);
+                          }}
+                          className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer"
+                        >
+                          <Navigation className="w-4 h-4" />
+                        </button>
                         <button
                           title="Simulate with SafeShift"
                           onClick={(e) => {

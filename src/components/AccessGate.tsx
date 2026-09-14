@@ -1,32 +1,23 @@
 import React, { useMemo, useState } from 'react';
 import { MapPinned, ShieldCheck } from 'lucide-react';
-import { AdministrativeScope, User } from '../types';
+import { User } from '../types';
 
 interface AccessGateProps {
   users: User[];
-  onEnter: (user: User, scope: AdministrativeScope) => void;
+  onEnter: (user: User) => void;
 }
-
-const PILOT_SCOPE: AdministrativeScope = {
-  state_id: 'uk',
-  district_id: 'chamoli',
-  sub_district_id: 'joshimath',
-  area_id: 'joshimath-central',
-};
 
 const roleLabel = (role: User['role']) => role.replaceAll('_', ' ');
 
 export const AccessGate: React.FC<AccessGateProps> = ({ users, onEnter }) => {
   const [selectedUserId, setSelectedUserId] = useState(users[0]?.id ?? '');
-  const [scope, setScope] = useState<AdministrativeScope>(PILOT_SCOPE);
   const selectedUser = useMemo(
     () => users.find((user) => user.id === selectedUserId),
     [selectedUserId, users]
   );
-  const requiresScope = selectedUser?.role !== 'admin';
 
   const enterPortal = () => {
-    if (selectedUser) onEnter(selectedUser, scope);
+    if (selectedUser) onEnter(selectedUser);
   };
 
   return (
@@ -39,7 +30,7 @@ export const AccessGate: React.FC<AccessGateProps> = ({ users, onEnter }) => {
             </div>
             <div>
               <h1 className="text-xl font-bold">NammaSafe AI</h1>
-              <p className="text-xs text-slate-400">Chamoli risk intelligence portal</p>
+              <p className="text-xs text-slate-400">National risk intelligence portal</p>
             </div>
           </div>
         </div>
@@ -48,7 +39,7 @@ export const AccessGate: React.FC<AccessGateProps> = ({ users, onEnter }) => {
           <div>
             <h2 className="font-bold text-lg">Choose your access context</h2>
             <p className="text-sm text-slate-500 mt-1">
-              Location selection is required before non-administrator portal access.
+              Sign in, then pick your region and map area from the Region Quick-Select in the sidebar.
             </p>
           </div>
 
@@ -66,29 +57,6 @@ export const AccessGate: React.FC<AccessGateProps> = ({ users, onEnter }) => {
               ))}
             </select>
           </label>
-
-          {requiresScope && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {[
-                ['state_id', 'State', 'Uttarakhand'],
-                ['district_id', 'District', 'Chamoli'],
-                ['sub_district_id', 'Sub-district', 'Joshimath'],
-                ['area_id', 'Area / Division', 'Joshimath Central Division'],
-              ].map(([key, label, value]) => (
-                <label key={key} className="text-xs font-semibold text-slate-700">
-                  {label}
-                  <select
-                    required
-                    value={scope[key as keyof AdministrativeScope]}
-                    onChange={(event) => setScope((current) => ({ ...current, [key]: event.target.value }))}
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm font-normal"
-                  >
-                    <option value={PILOT_SCOPE[key as keyof AdministrativeScope]}>{value}</option>
-                  </select>
-                </label>
-              ))}
-            </div>
-          )}
 
           <button
             type="button"

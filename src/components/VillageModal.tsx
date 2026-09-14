@@ -19,6 +19,7 @@ interface VillageModalProps {
   recommendation?: RelocationRecommendation;
   onClose: () => void;
   onSimulate?: (habitationId: string) => void;
+  onPlanEvacuation?: (habitation: Habitation) => void;
 }
 
 export const VillageModal: React.FC<VillageModalProps> = ({
@@ -27,6 +28,7 @@ export const VillageModal: React.FC<VillageModalProps> = ({
   recommendation,
   onClose,
   onSimulate,
+  onPlanEvacuation,
 }) => {
   if (!habitation) return null;
 
@@ -251,19 +253,34 @@ export const VillageModal: React.FC<VillageModalProps> = ({
           >
             Close
           </button>
-          {onSimulate && (
-            <button
-              id={`simulate-modal-btn-${habitation.id}`}
-              onClick={() => {
-                onSimulate(habitation.id);
-                onClose();
-              }}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition cursor-pointer"
-            >
-              <span>Simulate Relocation</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onPlanEvacuation && (
+              <button
+                id={`evacuate-modal-btn-${habitation.id}`}
+                onClick={() => {
+                  onPlanEvacuation(habitation);
+                  onClose();
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition cursor-pointer"
+              >
+                <span>Plan Evacuation Route</span>
+                <Navigation className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {onSimulate && (
+              <button
+                id={`simulate-modal-btn-${habitation.id}`}
+                onClick={() => {
+                  onSimulate(habitation.id);
+                  onClose();
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition cursor-pointer"
+              >
+                <span>Simulate Relocation</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

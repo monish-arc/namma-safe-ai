@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Navbar,
 } from './components/Navbar';
-import { Sidebar, NavTab } from './components/Sidebar';
+import { Sidebar, getAccessibleTabs, NavTab } from './components/Sidebar';
 import { VillageModal } from './components/VillageModal';
 import { SiteModal } from './components/SiteModal';
 import { AccessGate } from './components/AccessGate';
@@ -18,11 +18,11 @@ import { ReportsPage } from './pages/ReportsPage';
 import { AdminPage } from './pages/AdminPage';
 import { DocsPage } from './pages/DocsPage';
 import { RiskAlertsPage } from './pages/RiskAlertsPage';
+import { EvacuationPlanPage } from './pages/EvacuationPlanPage';
 
 // Types & Services
 import {
   User,
-  AdministrativeScope,
   Habitation,
   RelocationSite,
   RedZone,
@@ -31,13 +31,36 @@ import {
   DashboardSummary,
   MapLayerItem,
   HazardEvent,
+  RegionSelection,
+  RegionViewportFocus,
+  EvacuationOriginPayload,
+  FloodForecastResponse,
+  DataStatusEntry,
 } from './types';
 import { DEMO_USERS } from './data/mockData';
 import { apiService } from './services/api';
+import { resolveRegionViewport } from './lib/regionViewport';
+import {
+  REGION_STATES,
+  DISTRICTS_BY_STATE,
+  SUBDISTRICTS_BY_DISTRICT,
+} from './data/regions/hierarchy';
+
+const DEFAULT_REGION: RegionSelection = (() => {
+  const state = REGION_STATES.find((s) => s.code === 5) ?? null;
+  const district =
+    (state && DISTRICTS_BY_STATE[5]?.find((d) => d.code === 47)) ?? null;
+  const subDistrict =
+    (district && SUBDISTRICTS_BY_DISTRICT[47]?.find((s) => s.code === 284)) ?? null;
+  return { state, district, subDistrict, place: null };
+})();
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [selectedRegion, setSelectedRegion] = useState<RegionSelection>(DEFAULT_REGION);
+  const [regionFocus, setRegionFocus] = useState<RegionViewportFocus | null>(null);
+  const regionFocusKeyRef = useRef(0);
   const [loading, setLoading] = useState(true);
 
   // Core Data
@@ -49,17 +72,46 @@ export default function App() {
   const [recommendations, setRecommendations] = useState<RelocationRecommendation[]>([]);
   const [infrastructure, setInfrastructure] = useState<MapLayerItem[]>([]);
   const [hazardEvents, setHazardEvents] = useState<HazardEvent[]>([]);
+  const [floodForecast, setFloodForecast] = useState<FloodForecastResponse | null>(null);
+  const [dataStatus, setDataStatus] = useState<DataStatusEntry[] | null>(null);
 
   // Modals & Cross-tab Navigation State
   const [modalHabitation, setModalHabitation] = useState<Habitation | null>(null);
   const [modalSite, setModalSite] = useState<RelocationSite | null>(null);
   const [simulatorHabId, setSimulatorHabId] = useState<string | undefined>(undefined);
   const [simulatorSiteId, setSimulatorSiteId] = useState<string | undefined>(undefined);
+  const [evacuationOrigin, setEvacuationOrigin] = useState<EvacuationOriginPayload | null>(null);
 
   // Initial load
   useEffect(() => {
     loadAllData();
   }, []);
+
+  // CLAMP active tab to the current role's allowed navigation
+  useEffect(() => {
+    if (!currentUser) return;
+    const tabs = getAccessibleTabs(currentUser.role);
+    if (tabs.length > 0 && !tabs.includes(activeTab)) {
+      setActiveTab(tabs[0]);
+    }
+  }, [currentUser, activeTab]);
+
+  // RESOLVE region selection → map viewport (offline-first + geocode fallback)
+  useEffect(() => {
+    let cancelled = false;
+    resolveRegionViewport(selectedRegion, habitations)
+      .then((viewport) => {
+        if (cancelled || !viewport) return;
+        regionFocusKeyRef.current += 1;
+        setRegionFocus({ ...viewport, key: String(regionFocusKeyRef.current) });
+      })
+      .catch(() => {
+        /* leave map unchanged if resolution fails */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRegion, habitations]);
 
   const loadAllData = async () => {
     setLoading(true);
@@ -73,6 +125,8 @@ export default function App() {
         recsData,
         infraData,
         eventsData,
+        floodData,
+        statusData,
       ] = await Promise.all([
         apiService.getDashboardSummary(),
         apiService.getHabitations(),
@@ -82,6 +136,8 @@ export default function App() {
         apiService.getRecommendations(),
         apiService.getInfrastructure(),
         apiService.getHazardEvents(),
+        apiService.getFloodForecast().catch(() => null),
+        apiService.getDataStatus().catch(() => null),
       ]);
 
       setSummary(sumData);
@@ -92,6 +148,8 @@ export default function App() {
       setRecommendations(recsData);
       setInfrastructure(infraData);
       setHazardEvents(eventsData);
+      setFloodForecast(floodData);
+      setDataStatus(statusData?.layers ?? null);
     } catch (err) {
       console.error('Error loading initial data:', err);
     } finally {
@@ -108,12 +166,30 @@ export default function App() {
     setActiveTab('simulator');
   };
 
-  const handleSwitchUser = (user: User) => {
-    setCurrentUser(user);
+  const handleOpenEvacuation = (origin?: EvacuationOriginPayload | Habitation) => {
+    if (origin && 'village_name' in origin) {
+      setEvacuationOrigin({
+        type: 'habitation',
+        id: origin.id,
+        label: origin.village_name,
+        lat: origin.latitude,
+        lng: origin.longitude,
+      });
+    } else if (origin) {
+      setEvacuationOrigin(origin);
+    } else {
+      setEvacuationOrigin(null);
+    }
+    setActiveTab('evacuation');
   };
 
-  const handleEnterPortal = (user: User, selectedScope: AdministrativeScope) => {
-    setCurrentUser({ ...user, assignment: selectedScope });
+  const handleSwitchUser = (user: User) => {
+    setCurrentUser(user);
+    setEvacuationOrigin(null);
+  };
+
+  const handleEnterPortal = (user: User) => {
+    setCurrentUser(user);
   };
 
   const handleResetData = async () => {
@@ -171,6 +247,8 @@ export default function App() {
           activeTab={activeTab}
           onSelectTab={(tab) => setActiveTab(tab)}
           userRole={currentUser.role}
+          region={selectedRegion}
+          onRegionChange={setSelectedRegion}
         />
 
         {/* Content Viewport */}
@@ -203,6 +281,10 @@ export default function App() {
                   infrastructure={infrastructure}
                   onSelectHabitation={(hab) => setModalHabitation(hab)}
                   onSelectSite={(site) => setModalSite(site)}
+                  focusRegion={regionFocus}
+                  onOpenEvacuation={(hab) => handleOpenEvacuation(hab)}
+                  floodForecast={floodForecast}
+                  dataStatus={dataStatus}
                 />
               )}
 
@@ -215,6 +297,7 @@ export default function App() {
                   habitations={habitations}
                   onSelectHabitation={(hab) => setModalHabitation(hab)}
                   onSimulateHabitation={(habId) => handleLaunchSimulation(habId)}
+                  onPlanEvacuation={(hab) => handleOpenEvacuation(hab)}
                 />
               )}
 
@@ -224,6 +307,7 @@ export default function App() {
                   recommendations={recommendations}
                   onSelectHabitation={(hab) => setModalHabitation(hab)}
                   onSimulate={(habId, siteId) => handleLaunchSimulation(habId, siteId)}
+                  onPlanEvacuation={(hab) => handleOpenEvacuation(hab)}
                   onRecalculatePriority={handleRecalculatePriority}
                 />
               )}
@@ -237,6 +321,18 @@ export default function App() {
                   onSimulate={(habId, siteId, fams) =>
                     apiService.simulateRelocation(habId, siteId, fams)
                   }
+                  onPlanEvacuation={(hab) => handleOpenEvacuation(hab)}
+                />
+              )}
+
+              {activeTab === 'evacuation' && (
+                <EvacuationPlanPage
+                  habitations={habitations}
+                  hazardEvents={hazardEvents}
+                  relocationSites={relocationSites}
+                  redZones={redZones}
+                  infrastructure={infrastructure}
+                  initialOrigin={evacuationOrigin}
                 />
               )}
 
@@ -297,6 +393,7 @@ export default function App() {
           )}
           onClose={() => setModalHabitation(null)}
           onSimulate={(habId) => handleLaunchSimulation(habId)}
+          onPlanEvacuation={(hab) => handleOpenEvacuation(hab)}
         />
       )}
 
